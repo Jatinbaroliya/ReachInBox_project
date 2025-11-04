@@ -1,4 +1,4 @@
-import React from 'react';
+ 
 import { Email } from '../types';
 
 interface Props {
