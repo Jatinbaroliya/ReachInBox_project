@@ -11,6 +11,11 @@ function getOpenAI(): OpenAI {
 }
 
 export async function categorizeEmail(email: IEmail): Promise<IEmail['category']> {
+  // Ensure we have content to analyze
+  const emailBody = email.body || email.html || '';
+  const emailSubject = email.subject || '';
+  const emailFrom = email.from || '';
+
   const prompt = `Analyze this email and categorize it into ONE of these categories:
 1. Interested - Customer wants to buy, learn more, or shows positive interest
 2. Meeting Booked - Someone scheduled or confirmed a meeting/call
@@ -19,28 +24,79 @@ export async function categorizeEmail(email: IEmail): Promise<IEmail['category']
 5. Out of Office - Automatic away/vacation replies
 
 Email:
-Subject: ${email.subject}
-From: ${email.from}
-Body: ${email.body.substring(0, 500)}
+Subject: ${emailSubject}
+From: ${emailFrom}
+Body: ${emailBody.substring(0, 500)}
 
 Reply with ONLY the category name. If unsure, choose the closest match.`;
 
   try {
-    if (isDummyMode || !process.env.OPENAI_API_KEY) {
-      // naive heuristic for demo mode
-      const text = `${email.subject} ${email.body}`.toLowerCase();
-      if (text.includes('meeting') || text.includes('schedule')) return 'Meeting Booked';
-      if (text.includes('interested') || text.includes('learn more')) return 'Interested';
-      if (text.includes('out of office') || text.includes('ooo')) return 'Out of Office';
-      if (text.includes('unsubscribe') || text.includes('not interested')) return 'Not Interested';
+    // Only use dummy mode heuristics if actually in dummy mode
+    if (isDummyMode) {
+      console.log('📝 Using dummy mode heuristics for categorization');
+      // Enhanced heuristic for demo mode
+      const text = `${emailSubject} ${emailBody}`.toLowerCase();
+      
+      // Check for Out of Office first (most specific)
+      if (text.includes('out of office') || text.includes('ooo') || text.includes('auto-reply') || text.includes('automatic reply')) {
+        return 'Out of Office';
+      }
+      
+      // Check for Meeting Booked
+      if (text.includes('meeting') || text.includes('schedule') || text.includes('calendar') || text.includes('appointment')) {
+        return 'Meeting Booked';
+      }
+      
+      // Check for Interested
+      if (text.includes('interested') || text.includes('learn more') || text.includes('pricing') || text.includes('quote') || text.includes('demo')) {
+        return 'Interested';
+      }
+      
+      // Check for Not Interested
+      if (text.includes('not interested') || text.includes('decline') || text.includes('unsubscribe')) {
+        return 'Not Interested';
+      }
+      
+      // Check for Spam indicators (more comprehensive)
+      if (text.includes('unsubscribe') || text.includes('promotion') || text.includes('promo') || 
+          text.includes('discount') || text.includes('limited time') || text.includes('free cash') ||
+          text.includes('free') && (text.includes('money') || text.includes('cash') || text.includes('prize')) ||
+          text.includes('click here') || text.includes('act now') || text.includes('limited offer')) {
+        return 'Spam';
+      }
+      
+      // Default to Spam if it looks promotional but doesn't match other categories
+      if (text.includes('free') || text.includes('offer') || text.includes('deal') || text.includes('sale')) {
+        return 'Spam';
+      }
+      
+      console.warn(`⚠️ Dummy mode: No category matched for email. Subject: "${emailSubject.substring(0, 50)}"`);
       return undefined;
     }
+
+    // Use OpenAI API (only if not in dummy mode)
+    if (!process.env.OPENAI_API_KEY) {
+      console.error('❌ OPENAI_API_KEY is not set - cannot use AI categorization');
+      // Fallback to heuristics if no API key
+      console.log('📝 Falling back to heuristics');
+      const text = `${emailSubject} ${emailBody}`.toLowerCase();
+      if (text.includes('out of office') || text.includes('ooo')) return 'Out of Office';
+      if (text.includes('meeting') || text.includes('schedule')) return 'Meeting Booked';
+      if (text.includes('interested') || text.includes('learn more')) return 'Interested';
+      if (text.includes('spam') || text.includes('unsubscribe') || text.includes('promo')) return 'Spam';
+      return undefined;
+    }
+
+    // Use configurable model, default to gpt-3.5-turbo (more accessible)
+    const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+    console.log(`🔗 Calling OpenAI API for categorization with model: ${model}...`);
+    
     const response = await getOpenAI().chat.completions.create({
-      model: 'gpt-4',
+      model: model,
       messages: [
         {
           role: 'system',
-          content: 'You are an email classification expert. Respond with only the category name.'
+          content: 'You are an email classification expert. Respond with ONLY the category name from the list: Interested, Meeting Booked, Not Interested, Spam, Out of Office.'
         },
         { role: 'user', content: prompt }
       ],
@@ -48,7 +104,12 @@ Reply with ONLY the category name. If unsure, choose the closest match.`;
       max_tokens: 20
     });
 
-    const category = response.choices[0].message.content?.trim();
+    const category = response.choices[0]?.message?.content?.trim();
+
+    if (!category) {
+      console.warn('⚠️ OpenAI returned empty category');
+      return undefined;
+    }
 
     const validCategories: IEmail['category'][] = [
       'Interested',
@@ -58,13 +119,30 @@ Reply with ONLY the category name. If unsure, choose the closest match.`;
       'Out of Office'
     ];
 
-    if (validCategories.includes(category as IEmail['category'])) {
-      return category as IEmail['category'];
+    // Try to match category (case-insensitive)
+    const matchedCategory = validCategories.find(
+      cat => cat.toLowerCase() === category.toLowerCase()
+    );
+
+    if (matchedCategory) {
+      return matchedCategory;
     }
 
+    // Log if category doesn't match
+    console.warn(`⚠️ OpenAI returned invalid category: "${category}". Valid categories are: ${validCategories.join(', ')}`);
     return undefined;
   } catch (error) {
-    console.error('AI categorization error:', error);
+    console.error('❌ AI categorization error:', error);
+    if (error instanceof Error) {
+      console.error('Error details:', error.message);
+      console.error('Error stack:', error.stack);
+      
+      // Check if it's a model access error
+      if (error.message.includes('does not exist') || error.message.includes('access')) {
+        console.error('⚠️ Model access error - check your OpenAI API key permissions and model availability');
+        console.error('💡 Tip: Try setting OPENAI_MODEL=gpt-3.5-turbo in your .env file');
+      }
+    }
     return undefined;
   }
 }

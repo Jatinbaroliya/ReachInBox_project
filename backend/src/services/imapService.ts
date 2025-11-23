@@ -1,6 +1,6 @@
 import Imap from 'imap';
 import { simpleParser } from 'mailparser';
-import Email from '../models/Email';
+import Email, { IEmail } from '../models/Email';
 import { indexEmail } from './elasticsearchService';
 import { categorizeEmail } from './aiCategorizationService';
 import { sendSlackNotification } from './slackService';
@@ -108,21 +108,20 @@ function startIdleMode(imap: Imap, account: string) {
 }
 
 // Helper: map common Gmail labels to application categories
-function mapGmailLabelsToCategory(labels: string[] | undefined): string | null {
+function mapGmailLabelsToCategory(labels: string[] | undefined): 'Interested' | 'Meeting Booked' | 'Not Interested' | 'Spam' | 'Out of Office' | null {
   if (!labels || !labels.length) return null;
 
   const normalized = labels.map(l => (l || '').toString().toLowerCase());
 
-  // common Gmail automatic categories
-  if (normalized.some(l => l.includes('category_promotions') || l.includes('promotions') || l.includes('promos'))) return 'Promotions';
-  if (normalized.some(l => l.includes('category_social') || l.includes('social'))) return 'Social';
-  if (normalized.some(l => l.includes('category_updates') || l.includes('updates') || l.includes('notifications'))) return 'Updates';
+  // Map to valid categories only
   if (normalized.some(l => l.includes('spam') || l.includes('junk'))) return 'Spam';
-
-  // user/custom labels could directly map to app categories like 'Interested'
+  
+  // user/custom labels could directly map to app categories
   if (normalized.some(l => l.includes('interested'))) return 'Interested';
-  if (normalized.some(l => l.includes('important') || l.includes('\\important'))) return 'Important';
-
+  
+  // Note: Gmail categories like Promotions, Social, Updates don't directly map to our categories
+  // They will be handled by AI categorization instead
+  
   return null;
 }
 
@@ -156,54 +155,166 @@ function fetchAndProcessEmails(
         // determine category from Gmail labels first (if available)
         const labelCategory = mapGmailLabelsToCategory(gmLabels as string[] | undefined);
 
-        const email = await Email.create({
-          messageId: parsed.messageId || `${account}-${Date.now()}-${seqno}`,
-          account,
-          folder: 'INBOX',
-          from: parsed.from?.text || 'unknown',
-          to: parsed.to?.value?.map((t: any) => t.address) || [],
-          subject: parsed.subject || '(No Subject)',
-          body: parsed.text || '',
-          html: parsed.html || '',
-          date: parsed.date || new Date(),
-          isRead: false,
-          isFlagged: false,
-          attachments: parsed.attachments?.map((a: any) => ({
+        const messageId = parsed.messageId || `${account}-${Date.now()}-${seqno}`;
+        
+        // Check if email already exists
+        let email = await Email.findOne({ messageId });
+        
+        if (email) {
+          // Email exists - update fields but preserve category if it already has one
+          email.account = account;
+          email.folder = 'INBOX';
+          email.from = parsed.from?.text || 'unknown';
+          email.to = parsed.to?.value?.map((t: any) => t.address) || [];
+          email.subject = parsed.subject || '(No Subject)';
+          email.body = parsed.text || '';
+          email.html = parsed.html || '';
+          email.date = parsed.date || new Date();
+          email.attachments = parsed.attachments?.map((a: any) => ({
             filename: a.filename || 'unknown',
             size: a.size || 0
-          })) || [],
-          // set initial category to label-derived if present; otherwise left empty for AI
-          category: labelCategory || undefined
-        });
+          })) || [];
+          // Only set category from labels if email doesn't have one yet
+          if (!email.category && labelCategory) {
+            email.category = labelCategory as 'Interested' | 'Meeting Booked' | 'Not Interested' | 'Spam' | 'Out of Office';
+          }
+          await email.save();
+        } else {
+          // Email doesn't exist - create new one
+          email = await Email.create({
+            messageId,
+            account,
+            folder: 'INBOX',
+            from: parsed.from?.text || 'unknown',
+            to: parsed.to?.value?.map((t: any) => t.address) || [],
+            subject: parsed.subject || '(No Subject)',
+            body: parsed.text || '',
+            html: parsed.html || '',
+            date: parsed.date || new Date(),
+            isRead: false,
+            isFlagged: false,
+            attachments: parsed.attachments?.map((a: any) => ({
+              filename: a.filename || 'unknown',
+              size: a.size || 0
+            })) || [],
+            // set initial category to label-derived if present; otherwise left empty for AI
+            category: labelCategory || undefined
+          });
+        }
 
         if (gmLabels && gmLabels.length) {
           console.log(`Labels for ${email.messageId}:`, gmLabels);
         }
 
-        // Index in Elasticsearch
-        await indexEmail(email);
-
         // If we didn't get a category from labels, fallback to AI categorization
-        if (!email.category) {
+        // Also check if email was just created (no category) or needs re-categorization
+        const hasCategory = email.category && email.category.trim() !== '';
+        console.log(`🔍 Checking category for email: ${email.subject.substring(0, 50)}, current category: ${email.category || 'none'}, hasCategory: ${hasCategory}`);
+        
+        if (!hasCategory) {
           try {
+            console.log(`🤖 Attempting AI categorization for email: ${email.subject.substring(0, 50)}`);
             const category = await categorizeEmail(email);
-            email.category = category;
-            await email.save();
+            console.log(`📊 Categorization result: ${category || 'undefined'}`);
+            if (category) {
+              email.category = category;
+              await email.save();
+              // Reload email to ensure we have the latest data
+              const reloadedEmail = await Email.findById(email._id);
+              if (reloadedEmail) {
+                email = reloadedEmail;
+              }
+              console.log(`✅ Email categorized as: ${category}`);
+            } else {
+              console.warn(`⚠️ AI categorization returned no category for: ${email.subject.substring(0, 50)}`);
+              // Try fallback heuristics if AI didn't return a category
+              const subjectLower = (email.subject || '').toLowerCase();
+              const bodyLower = (email.body || '').toLowerCase();
+              const text = `${subjectLower} ${bodyLower}`;
+              
+              let fallbackCategory: string | undefined = undefined;
+              
+              // Use heuristics as fallback
+              if (text.includes('out of office') || text.includes('ooo') || text.includes('auto-reply')) {
+                fallbackCategory = 'Out of Office';
+              } else if (text.includes('meeting') || text.includes('schedule') || text.includes('calendar')) {
+                fallbackCategory = 'Meeting Booked';
+              } else if (text.includes('interested') || text.includes('learn more') || text.includes('pricing')) {
+                fallbackCategory = 'Interested';
+              } else if (text.includes('not interested') || text.includes('decline')) {
+                fallbackCategory = 'Not Interested';
+              } else if (text.includes('free') || text.includes('cash') || text.includes('promo') || 
+                         text.includes('discount') || text.includes('offer') || text.includes('deal') ||
+                         text.includes('unsubscribe')) {
+                fallbackCategory = 'Spam';
+              }
+              
+              if (fallbackCategory) {
+                email.category = fallbackCategory as 'Interested' | 'Meeting Booked' | 'Not Interested' | 'Spam' | 'Out of Office';
+                await email.save();
+                const reloadedEmail = await Email.findById(email._id);
+                if (reloadedEmail) {
+                  email = reloadedEmail;
+                }
+                console.log(`📧 Used fallback heuristics to categorize as: ${fallbackCategory}`);
+              } else {
+                console.warn(`⚠️ Could not categorize email even with fallback heuristics`);
+              }
+            }
           } catch (aiErr) {
-            console.error('AI categorization failed:', aiErr);
+            console.error('❌ AI categorization failed:', aiErr);
+            console.error('Error stack:', aiErr instanceof Error ? aiErr.stack : 'No stack trace');
+            
+            // Try fallback heuristics even if AI failed
+            try {
+              const subjectLower = (email.subject || '').toLowerCase();
+              const bodyLower = (email.body || '').toLowerCase();
+              const text = `${subjectLower} ${bodyLower}`;
+              
+              let fallbackCategory: string | undefined = undefined;
+              
+              if (text.includes('out of office') || text.includes('ooo')) {
+                fallbackCategory = 'Out of Office';
+              } else if (text.includes('meeting') || text.includes('schedule')) {
+                fallbackCategory = 'Meeting Booked';
+              } else if (text.includes('interested') || text.includes('learn more')) {
+                fallbackCategory = 'Interested';
+              } else if (text.includes('spam') || text.includes('unsubscribe') || text.includes('promo')) {
+                fallbackCategory = 'Spam';
+              }
+              
+              if (fallbackCategory) {
+                email.category = fallbackCategory as 'Interested' | 'Meeting Booked' | 'Not Interested' | 'Spam' | 'Out of Office';
+                await email.save();
+                const reloadedEmail = await Email.findById(email._id);
+                if (reloadedEmail) {
+                  email = reloadedEmail;
+                }
+                console.log(`📧 Used fallback heuristics after AI error to categorize as: ${fallbackCategory}`);
+              }
+            } catch (fallbackErr) {
+              console.error('❌ Fallback categorization also failed:', fallbackErr);
+            }
           }
+        } else {
+          console.log(`📋 Email categorized from labels as: ${email.category}`);
         }
 
-        // Send Slack notification if Interested
-        if (email.category === 'Interested') {
-          await sendSlackNotification(email);
-          await triggerWebhook(email);
+        // Index in Elasticsearch after categorization (so category is included)
+        if (email) {
+          await indexEmail(email);
+
+          // Send Slack notification if Interested
+          if (email.category === 'Interested') {
+            await sendSlackNotification(email);
+            await triggerWebhook(email);
+          }
+
+          // Emit real-time update
+          io.emit('new-email', email);
+
+          console.log(`✅ Processed: ${email.subject.substring(0, 50)} (category: ${email.category || 'Uncategorized'})`);
         }
-
-        // Emit real-time update
-        io.emit('new-email', email);
-
-        console.log(`✅ Processed: ${email.subject.substring(0, 50)} (category: ${email.category || 'Uncategorized'})`);
       } catch (error) {
         console.error('Error processing email:', error);
       }

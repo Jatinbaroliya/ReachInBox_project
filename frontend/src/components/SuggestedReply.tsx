@@ -18,10 +18,18 @@ const SuggestedReply: React.FC<Props> = ({ emailId }) => {
     setLoading(true);
     setError(null);
     try {
+      if (!emailId) {
+        throw new Error('Email ID is required');
+      }
       const data = await getSuggestedReply(emailId);
-      setReply(data.reply);
-    } catch (err) {
-      setError('Unable to generate reply');
+      if (data && data.reply) {
+        setReply(data.reply);
+      } else {
+        throw new Error('No reply received from server');
+      }
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.error || err?.message || 'Unable to generate reply';
+      setError(errorMessage);
       console.error('Error loading suggested reply:', err);
     } finally {
       setLoading(false);
