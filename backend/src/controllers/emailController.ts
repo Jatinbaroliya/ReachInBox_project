@@ -117,8 +117,38 @@ export const getSuggestedReply = async (req: Request, res: Response) => {
     console.error('❌ Error in getSuggestedReply:', error);
     if (error instanceof Error) {
       console.error('Error details:', error.message);
+      console.error('Error stack:', error.stack);
+      
+      // Provide specific error messages and status codes
+      let errorMessage = 'Failed to generate AI reply';
+      let statusCode = 500;
+      
+      if (error.message.includes('quota exceeded') || error.message.includes('insufficient_quota')) {
+        errorMessage = 'OpenAI API quota exceeded. Please check your billing and plan details at https://platform.openai.com/account/billing';
+        statusCode = 429; // Too Many Requests
+      } else if (error.message.includes('Invalid OpenAI API key') || error.message.includes('invalid_api_key')) {
+        errorMessage = 'Invalid OpenAI API key. Please check your OPENAI_API_KEY environment variable.';
+        statusCode = 401; // Unauthorized
+      } else if (error.message.includes('Invalid model') || error.message.includes('does not exist')) {
+        errorMessage = error.message; // Use the specific error message from validation
+        statusCode = 400; // Bad Request
+      } else if (error.message.includes('Model not found')) {
+        errorMessage = error.message;
+        statusCode = 404; // Not Found
+      } else {
+        errorMessage = `AI reply generation failed: ${error.message}`;
+      }
+      
+      return res.status(statusCode).json({ 
+        error: errorMessage,
+        details: error.message 
+      });
     }
-    res.status(500).json({ error: 'Failed to generate reply', details: error instanceof Error ? error.message : 'Unknown error' });
+    
+    res.status(500).json({ 
+      error: 'Failed to generate reply', 
+      details: 'Unknown error occurred' 
+    });
   }
 };
 

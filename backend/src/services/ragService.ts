@@ -64,6 +64,15 @@ Reply:`;
 
     // Use configurable model, default to gpt-3.5-turbo (more accessible)
     const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+    
+    // Validate model name - check for common invalid models
+    const validModels = ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo-preview', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini'];
+    if (!validModels.includes(model.toLowerCase())) {
+      const errorMsg = `Invalid model "${model}". Valid models are: ${validModels.join(', ')}. Please check your OPENAI_MODEL environment variable.`;
+      console.error(`❌ ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
     console.log(`🔗 Calling OpenAI API for reply generation with model: ${model}...`);
     
     const response = await getOpenAI().chat.completions.create({
@@ -88,20 +97,47 @@ Reply:`;
 
     console.log(`✅ Successfully generated reply (${reply.length} characters)`);
     return reply;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ RAG generation error:', error);
+    
+    // Handle specific OpenAI API errors
+    if (error?.status === 429 || error?.code === 'insufficient_quota' || error?.error?.type === 'insufficient_quota') {
+      const errorMsg = 'OpenAI API quota exceeded. Please check your billing and plan details at https://platform.openai.com/account/billing';
+      console.error(`❌ ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
+    if (error?.status === 401 || error?.code === 'invalid_api_key') {
+      const errorMsg = 'Invalid OpenAI API key. Please check your OPENAI_API_KEY environment variable.';
+      console.error(`❌ ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
+    if (error?.status === 404 || error?.message?.includes('does not exist')) {
+      const errorMsg = `Model not found or you don't have access. Please check your OPENAI_MODEL setting. Valid models: gpt-3.5-turbo, gpt-4, gpt-4-turbo-preview, gpt-4-turbo, gpt-4o, gpt-4o-mini`;
+      console.error(`❌ ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+    
     if (error instanceof Error) {
       console.error('Error details:', error.message);
       console.error('Error stack:', error.stack);
+      
+      // Check if it's a model validation error (from our validation)
+      if (error.message.includes('Invalid model')) {
+        throw error; // Re-throw validation errors
+      }
       
       // Check if it's a model access error
       if (error.message.includes('does not exist') || error.message.includes('access')) {
         console.error('⚠️ Model access error - check your OpenAI API key permissions and model availability');
         console.error('💡 Tip: Try setting OPENAI_MODEL=gpt-3.5-turbo in your .env file');
+        throw error;
       }
     }
     
-    // Return a fallback reply instead of an error message
-    return `Hi ${senderName},\n\nThank you for your email regarding "${emailSubject}".\n\nWe appreciate you reaching out and would be happy to discuss how ReachInbox can help your business. Please feel free to schedule a time that works for you: ${CONTEXT_DATA.meetingLink}\n\nBest regards,\nThe ReachInbox Team`;
+    // For other errors, throw with a generic message
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error occurred during AI reply generation';
+    throw new Error(errorMsg);
   }
 }

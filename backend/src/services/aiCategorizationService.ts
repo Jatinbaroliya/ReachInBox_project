@@ -89,6 +89,20 @@ Reply with ONLY the category name. If unsure, choose the closest match.`;
 
     // Use configurable model, default to gpt-3.5-turbo (more accessible)
     const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
+    
+    // Validate model name - check for common invalid models
+    const validModels = ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo-preview', 'gpt-4-turbo', 'gpt-4o', 'gpt-4o-mini'];
+    if (!validModels.includes(model.toLowerCase())) {
+      console.error(`❌ Invalid model "${model}". Valid models are: ${validModels.join(', ')}. Falling back to heuristics.`);
+      // Fall back to heuristics instead of throwing
+      const text = `${emailSubject} ${emailBody}`.toLowerCase();
+      if (text.includes('out of office') || text.includes('ooo')) return 'Out of Office';
+      if (text.includes('meeting') || text.includes('schedule')) return 'Meeting Booked';
+      if (text.includes('interested') || text.includes('learn more')) return 'Interested';
+      if (text.includes('spam') || text.includes('unsubscribe') || text.includes('promo')) return 'Spam';
+      return undefined;
+    }
+    
     console.log(`🔗 Calling OpenAI API for categorization with model: ${model}...`);
     
     const response = await getOpenAI().chat.completions.create({
@@ -131,18 +145,43 @@ Reply with ONLY the category name. If unsure, choose the closest match.`;
     // Log if category doesn't match
     console.warn(`⚠️ OpenAI returned invalid category: "${category}". Valid categories are: ${validCategories.join(', ')}`);
     return undefined;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ AI categorization error:', error);
+    
+    // Handle specific OpenAI API errors - for categorization, we fall back to heuristics
+    if (error?.status === 429 || error?.code === 'insufficient_quota' || error?.error?.type === 'insufficient_quota') {
+      console.error('⚠️ OpenAI API quota exceeded - falling back to heuristics');
+      const text = `${emailSubject} ${emailBody}`.toLowerCase();
+      if (text.includes('out of office') || text.includes('ooo')) return 'Out of Office';
+      if (text.includes('meeting') || text.includes('schedule')) return 'Meeting Booked';
+      if (text.includes('interested') || text.includes('learn more')) return 'Interested';
+      if (text.includes('spam') || text.includes('unsubscribe') || text.includes('promo')) return 'Spam';
+      return undefined;
+    }
+    
     if (error instanceof Error) {
       console.error('Error details:', error.message);
       console.error('Error stack:', error.stack);
       
       // Check if it's a model access error
-      if (error.message.includes('does not exist') || error.message.includes('access')) {
-        console.error('⚠️ Model access error - check your OpenAI API key permissions and model availability');
-        console.error('💡 Tip: Try setting OPENAI_MODEL=gpt-3.5-turbo in your .env file');
+      if (error.message.includes('does not exist') || error.message.includes('access') || error?.status === 404) {
+        console.error('⚠️ Model access error - falling back to heuristics');
+        const text = `${emailSubject} ${emailBody}`.toLowerCase();
+        if (text.includes('out of office') || text.includes('ooo')) return 'Out of Office';
+        if (text.includes('meeting') || text.includes('schedule')) return 'Meeting Booked';
+        if (text.includes('interested') || text.includes('learn more')) return 'Interested';
+        if (text.includes('spam') || text.includes('unsubscribe') || text.includes('promo')) return 'Spam';
+        return undefined;
       }
     }
+    
+    // For other errors, fall back to heuristics
+    console.warn('⚠️ Falling back to heuristics due to error');
+    const text = `${emailSubject} ${emailBody}`.toLowerCase();
+    if (text.includes('out of office') || text.includes('ooo')) return 'Out of Office';
+    if (text.includes('meeting') || text.includes('schedule')) return 'Meeting Booked';
+    if (text.includes('interested') || text.includes('learn more')) return 'Interested';
+    if (text.includes('spam') || text.includes('unsubscribe') || text.includes('promo')) return 'Spam';
     return undefined;
   }
 }
