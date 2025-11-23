@@ -62,7 +62,35 @@ export const searchEmailsController = async (req: Request, res: Response) => {
 
     res.json(results);
   } catch (error) {
-    res.status(500).json({ error: 'Search failed' });
+    console.error('❌ Search controller error:', error);
+    // Try MongoDB fallback if Elasticsearch fails
+    try {
+      const { q: queryParam, account: accountParam, folder: folderParam, category: categoryParam } = req.query;
+      const searchFilter: any = {};
+      
+      if (accountParam) searchFilter.account = accountParam;
+      if (folderParam) searchFilter.folder = folderParam;
+      if (categoryParam) searchFilter.category = categoryParam;
+      
+      if (queryParam) {
+        const queryLower = (queryParam as string).toLowerCase();
+        searchFilter.$or = [
+          { subject: { $regex: queryLower, $options: 'i' } },
+          { body: { $regex: queryLower, $options: 'i' } },
+          { from: { $regex: queryLower, $options: 'i' } }
+        ];
+      }
+      
+      const results = await Email.find(searchFilter)
+        .sort({ date: -1 })
+        .limit(100)
+        .lean();
+      
+      return res.json(results);
+    } catch (fallbackError) {
+      console.error('❌ MongoDB fallback search also failed:', fallbackError);
+      res.status(500).json({ error: 'Search failed', details: error instanceof Error ? error.message : 'Unknown error' });
+    }
   }
 };
 

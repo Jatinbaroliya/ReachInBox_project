@@ -354,21 +354,34 @@ body {
 .email-detail-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 1.25rem;
   gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
 .email-detail-header h2 {
   flex: 1;
+  font-size: 1.5rem;
+  line-height: 1.4;
+  color: #f0f2f8;
+  margin: 0;
+  word-break: break-word;
 }
 
 .category-badge {
-  padding: 0.35rem 0.75rem;
+  padding: 0.4rem 0.85rem;
   border-radius: 999px;
   font-size: 0.8rem;
   font-weight: 600;
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.category-badge.uncategorized {
+  background: rgba(255,255,255,0.08);
+  color: #a3aac7;
 }
 
 .category-badge.interested {
@@ -399,36 +412,125 @@ body {
 .email-meta {
   background: rgba(255,255,255,0.04);
   border: 1px solid rgba(255,255,255,0.06);
-  padding: 0.9rem;
+  padding: 1rem;
   border-radius: 12px;
   margin-bottom: 1.25rem;
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 0.75rem 1rem;
+  gap: 0.85rem 1.25rem;
   font-size: 0.9rem;
 }
 
-.email-meta div {
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  overflow: hidden;
+}
+
+.meta-label {
+  font-size: 0.75rem;
+  color: #8a90ad;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.meta-value {
+  color: #e7e9ee;
   overflow: hidden;
   text-overflow: ellipsis;
-  word-break: break-word;
+  white-space: nowrap;
+  word-break: break-all;
 }
 
 .email-body {
   margin-bottom: 1.5rem;
-  line-height: 1.6;
+  line-height: 1.7;
+  color: #dfe2ee;
 }
 
-.email-body pre {
-  background: rgba(255,255,255,0.04);
+.email-html-content,
+.email-text-content {
+  background: rgba(255,255,255,0.03);
   border: 1px solid rgba(255,255,255,0.06);
-  padding: 1rem;
+  padding: 1.5rem;
   border-radius: 12px;
+  font-size: 0.95rem;
+  line-height: 1.7;
+  max-width: 100%;
   overflow-x: auto;
-  font-size: 0.92rem;
-  white-space: pre-wrap;
   word-wrap: break-word;
-  color: #dfe2ee;
+}
+
+.email-html-content {
+  /* Style HTML email content */
+}
+
+.email-html-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 0.5rem 0;
+}
+
+.email-html-content a {
+  color: #667eea;
+  text-decoration: underline;
+}
+
+.email-html-content a:hover {
+  color: #764ba2;
+}
+
+.email-html-content p {
+  margin: 0.75rem 0;
+}
+
+.email-html-content h1,
+.email-html-content h2,
+.email-html-content h3,
+.email-html-content h4 {
+  margin: 1rem 0 0.5rem 0;
+  color: #f0f2f8;
+}
+
+.email-html-content ul,
+.email-html-content ol {
+  margin: 0.75rem 0;
+  padding-left: 1.5rem;
+}
+
+.email-html-content li {
+  margin: 0.25rem 0;
+}
+
+.email-html-content blockquote {
+  border-left: 3px solid rgba(102,126,234,0.5);
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: #a3aac7;
+  font-style: italic;
+}
+
+.email-text-content {
+  white-space: pre-wrap;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
+.email-quote {
+  color: #8a90ad;
+  border-left: 2px solid rgba(255,255,255,0.1);
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+  font-style: italic;
+}
+
+.email-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #8a90ad;
+  font-size: 1.1rem;
 }
 
 .attachments {
@@ -436,17 +538,56 @@ body {
 }
 
 .attachments h4 {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
   color: #e7e9ee;
+  font-size: 0.95rem;
+}
+
+.attachments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .attachment {
   background: rgba(255,255,255,0.04);
   border: 1px solid rgba(255,255,255,0.06);
-  padding: 0.65rem 0.75rem;
+  padding: 0.75rem;
   border-radius: 10px;
-  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  transition: background 0.2s ease;
+}
+
+.attachment:hover {
+  background: rgba(255,255,255,0.06);
+}
+
+.attachment-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.attachment-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.attachment-name {
   font-size: 0.9rem;
+  color: #e7e9ee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-size {
+  font-size: 0.75rem;
+  color: #8a90ad;
 }
 
 .actions {

@@ -35,11 +35,27 @@ const EmailList: React.FC<Props> = ({ emails, onSelectEmail, selectedEmail, load
           >
             <div className="email-header">
               <span className="category-icon">{getCategoryIcon(email.category)}</span>
-              <span className="from">{email.from}</span>
+              <span className="from" title={email.from}>
+                {email.from?.includes('<') 
+                  ? email.from.split('<')[0].trim().replace(/['"]/g, '') || email.from.split('<')[1]?.replace('>', '') || 'Unknown'
+                  : email.from || 'Unknown'}
+              </span>
             </div>
-            <div className="subject">{email.subject}</div>
-            <div className="preview">{email.body.substring(0, 80)}...</div>
-            <div className="date">{new Date(email.date).toLocaleDateString()}</div>
+            <div className="subject" title={email.subject}>
+              {email.subject || '(No Subject)'}
+            </div>
+            <div className="preview" title={email.body}>
+              {email.body 
+                ? (email.body.length > 80 ? `${email.body.substring(0, 80)}...` : email.body)
+                : '(No preview available)'}
+            </div>
+            <div className="date" title={new Date(email.date).toLocaleString()}>
+              {new Date(email.date).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: new Date(email.date).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
+              })}
+            </div>
           </div>
         ))
       )}
